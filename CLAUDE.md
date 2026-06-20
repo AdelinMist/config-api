@@ -15,11 +15,23 @@ supplies base middleware, `/metrics`, health probes, Swagger UI at `/docs`, and 
 ArgoCD/Vault/Git/AWX connectors.
 
 `main.py` opts into the library's inbound JWT auth via `general_create_app(enable_auth=True, ...)`.
-It is **dual-gated**: the middleware only registers when the runtime env var `AUTH_ENABLED=true` is
-also set (and exactly one verification material is configured), so the default is auth-off /
-backward-compatible. All auth knobs (mode/algorithms/audience/issuer/key material/header/excluded
-paths) are env-driven via the *library's* `ApplicationSettings` singleton — they are **not** part of
-this service's `conf.py`. See `.env.example` and `tests/test_auth.py`.
+The service is protected by **SSO (generic OIDC)**, and this is **pure configuration — no auth code in
+this service**. SSO is the library's `JWTVerifier` in JWKS mode: set `AUTH_ENABLED=true` and
+`AUTH_OIDC_ISSUER=<issuer>` and the library discovers the provider's JWKS
+(`<issuer>/.well-known/openid-configuration` → `jwks_uri`) at startup, verifies inbound tokens against
+those keys, and uses the issuer as the expected `iss`. It is **dual-gated**: the middleware only
+registers when `AUTH_ENABLED=true` *and* exactly one verification material is configured
+(`AUTH_OIDC_ISSUER`/`AUTH_JWKS_URL`, or `AUTH_PUBLIC_KEY_*`, or `AUTH_HS256_SECRET`). With
+`AUTH_ENABLED` false (the default) auth is a no-op and the service runs open (backward-compatible).
+Misconfiguration (no material, or more than one, or unreachable issuer) fails fast at startup with
+`AuthConfigError`.
+
+All auth knobs (incl. the SSO/OIDC ones: `AUTH_OIDC_ISSUER`, `AUTH_OIDC_VERIFY_SSL`,
+`AUTH_OIDC_TIMEOUT`, `AUTH_JWKS_URL`, `AUTH_JWKS_CACHE_TTL`, `AUTH_AUDIENCE`, `AUTH_ALGORITHMS`) are
+env-driven via the *library's* `ApplicationSettings` singleton — they are **not** part of this
+service's `conf.py`. The OIDC-discovery capability itself lives in the library
+(`fastapi_template/_internal/security/oidc.py` + `verifier.py`); add general auth features there, not
+here. See `.env` and `tests/test_auth.py`.
 
 ## Commands
 

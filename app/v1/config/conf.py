@@ -33,6 +33,11 @@ class ConfigV1Settings(BaseSettings):
         description="Interval for the background loop that syncs the live allowlists and invalidates the cached OpenAPI schema.",
     )
 
+    CACHE_TTL_SECONDS: int = Field(
+        default=60,
+        description="Time-to-live (seconds) for the in-memory cache of resolved config, naming, and project-registry lookups.",
+    )
+
     API_PREFIX: StrictStr = Field(
         default="/api/v1/infra",
         description="Root path under which the Config API is served.",

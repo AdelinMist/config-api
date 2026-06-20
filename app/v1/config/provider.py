@@ -13,12 +13,13 @@ from .schemas import (
 
 
 class MongoConfigProvider:
-    """All MongoDB access for the Config API plus in-memory caching (60s TTL)
-    and the background allowlist-sync loop."""
+    """All MongoDB access for the Config API plus in-memory caching (configurable
+    TTL, default 60s) and the background allowlist-sync loop."""
 
-    def __init__(self, mongo_client: AsyncMongoClient, db_name: str, collection_name: str = "global_configs"):
+    def __init__(self, mongo_client: AsyncMongoClient, db_name: str, collection_name: str = "global_configs", cache_ttl_seconds: int = 60):
         self.collection = mongo_client[db_name][collection_name]
         self._cache = Cache(Cache.MEMORY)
+        self._cache_ttl = cache_ttl_seconds
 
     async def crawl_and_sync_keys(self, app_instance) -> None:
         """Discover allowed coordinate values from Mongo and hot-patch the live
@@ -92,7 +93,7 @@ class MongoConfigProvider:
         for layer in layers:
             result.update(layer)
 
-        await self._cache.set(cache_key, result, ttl=60)
+        await self._cache.set(cache_key, result, ttl=self._cache_ttl)
         return result
 
     async def resolve_naming_convention(self, meta: InfraMetadata) -> Dict[str, Any]:
@@ -111,7 +112,7 @@ class MongoConfigProvider:
         # No metadata coordinates supplied -> return the entire naming dictionary.
         if not any([meta.network, meta.region, meta.island, meta.environment, meta.space]):
             payload = {k: v for k, v in naming_doc.items() if k not in ("_id", "doc_type")}
-            await self._cache.set(cache_key, payload, ttl=60)
+            await self._cache.set(cache_key, payload, ttl=self._cache_ttl)
             return payload
 
         payload = {
@@ -122,7 +123,7 @@ class MongoConfigProvider:
             "space": naming_doc.get("space", {}).get(meta.space, {}),
         }
 
-        await self._cache.set(cache_key, payload, ttl=60)
+        await self._cache.set(cache_key, payload, ttl=self._cache_ttl)
         return payload
 
     async def get_all_projects(self) -> List[str]:
@@ -138,5 +139,5 @@ class MongoConfigProvider:
             return []
 
         result_list = project_doc.get("projects", [])
-        await self._cache.set(cache_key, result_list, ttl=60)
+        await self._cache.set(cache_key, result_list, ttl=self._cache_ttl)
         return result_list

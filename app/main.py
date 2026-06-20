@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
         mongo_client,
         db_name=config_v1_config.MONGO_DB_NAME,
         collection_name=config_v1_config.MONGO_COLLECTION,
+        cache_ttl_seconds=config_v1_config.CACHE_TTL_SECONDS,
     )
 
     # The polling loop needs the app to invalidate its cached OpenAPI schema, but
@@ -39,9 +40,10 @@ def create_app() -> FastAPI:
     # AuthMiddleware is dual-gated, so it only actually registers when the
     # AUTH_ENABLED env var is also true (and exactly one verification material is
     # configured). With AUTH_ENABLED unset/false — the default — auth is a no-op
-    # and the service behaves exactly as before. All auth knobs (mode/algorithms/
-    # audience/issuer/key material/excluded paths) are env-driven via the
-    # library's settings; see .env.example.
+    # and the service behaves exactly as before. SSO is just JWKS mode driven by
+    # the library: set AUTH_OIDC_ISSUER (the library discovers the provider's
+    # JWKS) plus AUTH_AUDIENCE. All auth knobs are env-driven via the library's
+    # settings; see .env.
     app = general_create_app(
         enable_auth=True,
         async_background_tasks=[_poll_config],

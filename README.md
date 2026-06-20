@@ -27,31 +27,41 @@ python -m app.main
 
 Swagger UI at `/docs`, metrics at `/metrics` (both provided by the library factory).
 
-## Authentication (optional, env-gated)
+## Authentication — SSO (generic OIDC)
 
-Inbound JWT bearer auth is provided by the library's `AuthMiddleware` and wired in via
-`general_create_app(enable_auth=True)`. It is **dual-gated**: the capability is compiled in, but the
-middleware only registers when the runtime env var `AUTH_ENABLED=true` is set *and* exactly one
-verification material is configured. With `AUTH_ENABLED` unset/false (the default) auth is a no-op and
-every route is open — fully backward compatible.
+The API is protected by **SSO**: clients present a bearer JWT issued by your SSO/OIDC provider, and the
+service verifies it **server-side against the provider's published keys (JWKS)** on every request.
+Keys are fetched once and cached (`AUTH_JWKS_CACHE_TTL`), so there is no per-request round-trip to the
+SSO server. This is the library's `AuthMiddleware` / `JWTVerifier` in JWKS mode — including the **OIDC
+discovery** that derives the provider's `jwks_uri` from its issuer — so this service adds no auth code,
+only configuration.
+
+**Turn it on with two env vars**: `AUTH_ENABLED=true` and `AUTH_OIDC_ISSUER=<your issuer URL>`. On
+startup the library fetches `<issuer>/.well-known/openid-configuration`, locates the `jwks_uri`, and
+verifies inbound tokens against it; `AUTH_OIDC_ISSUER` also becomes the expected `iss`. With
+`AUTH_ENABLED` false (the default) auth is a no-op and every route is open — backward compatible.
 
 When enabled, all coordinate/registry routes under `API_PREFIX` require `Authorization: Bearer <jwt>`;
-probe/metrics/openapi paths are always excluded. Misconfiguration (enabled with no material, or more
-than one) fails fast at startup with `AuthConfigError`.
+probe/metrics/openapi paths are always excluded. A broken issuer (discovery fails or returns no
+`jwks_uri`), or more than one verification material, fails fast at startup with `AuthConfigError`.
 
-Everything is env-configurable (read from the same `.env` by the library's settings) — see
-`.env.example`:
+Everything is env-configurable (read from the same `.env` by the library's settings):
 
 | Var | Purpose |
 |-----|---------|
 | `AUTH_ENABLED` | Runtime master switch |
-| `AUTH_PUBLIC_KEY_PEM` / `AUTH_PUBLIC_KEY_PATH` | RS256 offline public key (selects local-pubkey mode) |
-| `AUTH_JWKS_URL` / `AUTH_JWKS_CACHE_TTL` | RS256 via a JWKS/OIDC endpoint (selects JWKS mode) |
-| `AUTH_HS256_SECRET` | HS256 shared secret (selects HS256 mode) |
-| `AUTH_ALGORITHMS` | Allowed signing algorithms (e.g. `["RS256"]`) |
-| `AUTH_AUDIENCE` / `AUTH_ISSUER` | Optional `aud`/`iss` claim checks |
+| `AUTH_OIDC_ISSUER` | SSO issuer URL. The library discovers its JWKS and enforces it as `iss` |
+| `AUTH_AUDIENCE` | Expected `aud` claim (recommended in production; unset skips the check) |
+| `AUTH_JWKS_URL` | Explicit JWKS endpoint override; unset triggers discovery from the issuer |
+| `AUTH_JWKS_CACHE_TTL` | Lifetime (s) for cached JWKS keys (default `3600`) |
+| `AUTH_OIDC_VERIFY_SSL` / `AUTH_OIDC_TIMEOUT` | TLS verification / timeout for the discovery request |
+| `AUTH_ALGORITHMS` | Accepted signing algorithms (default `["RS256"]`) |
 | `AUTH_HEADER_NAME` | Header carrying the token (default `Authorization`) |
 | `AUTH_EXCLUDE_PATHS` | Extra path prefixes/regexes that bypass auth |
+
+The manual materials `AUTH_PUBLIC_KEY_PEM` / `AUTH_PUBLIC_KEY_PATH` (offline RS256) and
+`AUTH_HS256_SECRET` (shared secret) remain available for non-SSO setups, but are mutually exclusive
+with `AUTH_OIDC_ISSUER` / `AUTH_JWKS_URL`.
 
 ## Endpoints (prefix `/api/v1/infra`, configurable via `API_PREFIX`)
 
