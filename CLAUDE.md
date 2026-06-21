@@ -38,12 +38,12 @@ here. See `.env` and `tests/test_auth.py`.
 ```bash
 docker compose up -d                  # start MongoDB (mongo:7.0 on :27017)
 pip install -r requirements.txt       # pip.ini points at internal Artifactory for tashtiot-apis-library
-python seed_config.py                 # seed the 3 governing docs — DESTRUCTIVE: clears the collection first
+python scripts/seed_config.py         # seed the 3 governing docs — DESTRUCTIVE: clears the collection first
 python -m app.main                    # run the API
 ```
 
 A `pytest` suite lives under `tests/` (run `pytest`); it uses a fake Mongo (`tests/fakes.py`) and the
-seed shapes mirror `seed_config.py`. `test_auth.py` exercises the library's auth gating; the rest cover
+seed shapes mirror `scripts/seed_config.py`. `test_auth.py` exercises the library's auth gating; the rest cover
 the Mongo provider, routes, schemas, and OpenAPI enum injection.
 
 ## Configuration
@@ -75,7 +75,7 @@ there. Do not reintroduce local copies; general capabilities live in the library
 2. `naming_conventions` — per-level host/cname token maps.
 3. `project_registry` — flat `projects` list of authorized application names.
 
-`seed_config.py` holds the canonical seed data — keep it in sync when changing the document shapes.
+`scripts/seed_config.py` holds the canonical seed data — keep it in sync when changing the document shapes.
 
 ### Dynamic validation & OpenAPI enums (non-obvious — read before editing)
 
