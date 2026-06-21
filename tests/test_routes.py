@@ -27,6 +27,31 @@ class TestProjectsRoute:
         assert "empty" in resp.json()["detail"].lower()
 
 
+class TestCoordinatesRoute:
+    def test_lists_all_coordinate_values(self, client, api_prefix):
+        resp = client.get(f"{api_prefix}/coordinates")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["space"] == ["core-infrastructure", "tenant-alpha"]
+        assert body["network"] == ["backbone-net"]
+        assert body["region"] == ["us-east"]
+        assert body["island"] == ["compute-island-a"]
+        assert body["environment"] == ["production", "staging"]
+        assert body["projects"] == [
+            "authentication-service", "data-warehouse-pipeline",
+            "notification-engine", "payment-gateway",
+        ]
+
+    def test_empty_catalog_returns_200_empty_arrays(self, empty_client, api_prefix):
+        # A discovery endpoint: nothing seeded is valid info, not a 404.
+        resp = empty_client.get(f"{api_prefix}/coordinates")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "space": [], "network": [], "region": [],
+            "island": [], "environment": [], "projects": [],
+        }
+
+
 class TestConfigRoute:
     def test_full_coordinates_resolve_200(self, client, api_prefix):
         resp = client.get(f"{api_prefix}/config", params=_config_params())

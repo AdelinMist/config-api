@@ -1,32 +1,86 @@
-"""Seed the Config API's MongoDB with the three governing documents.
+"""Seed the Config API's MongoDB with the three governing collections.
 
-Destructive: clears the target collection first. Mirrors the seed data used by
-the v1 Config API (app/v1/config). Run with the API's MongoDB reachable:
+Destructive: drops and recreates each target collection. Every collection is
+created with a ``$jsonSchema`` validator (envelope-level enforcement on write),
+and every document is validated through its Pydantic model before insertion, so
+malformed seed data fails fast — before any write. Run with the API's MongoDB
+reachable:
 
-    python seed_config.py
+    python scripts/seed_config.py
+
+Mirrors the seed data the v1 Config API resolves (app/v1/config).
 """
 import os
+import sys
+from pathlib import Path
+
 from pymongo import MongoClient
+
+# Allow running as a standalone script (python scripts/seed_config.py) by putting
+# the repo root on the path so `app` imports resolve.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.v1.config.models import (  # noqa: E402
+    EnterpriseConfigurationDoc,
+    NamingConventionsDoc,
+    ProjectRegistryDoc,
+)
 
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME", "infrastructure_governor")
-MONGO_COLLECTION = os.environ.get("MONGO_COLLECTION", "global_configs")
+ENTERPRISE_COLLECTION = os.environ.get("MONGO_COLLECTION_ENTERPRISE_CONFIG", "enterprise_configuration")
+NAMING_COLLECTION = os.environ.get("MONGO_COLLECTION_NAMING", "naming_conventions")
+PROJECTS_COLLECTION = os.environ.get("MONGO_COLLECTION_PROJECTS", "project_registry")
+
+
+# Per-collection envelope validators. Inner config/naming values stay free-form
+# (the cascade tree and naming tokens are intentionally heterogeneous); `_id` is
+# allowed because `additionalProperties` is left at its default (true).
+ENTERPRISE_SCHEMA = {
+    "$jsonSchema": {
+        "bsonType": "object",
+        "required": ["config", "space"],
+        "properties": {
+            "config": {"bsonType": "object"},
+            "space": {"bsonType": "object"},
+        },
+    }
+}
+
+NAMING_SCHEMA = {
+    "$jsonSchema": {
+        "bsonType": "object",
+        "required": ["network", "region", "island", "environment", "space"],
+        "properties": {
+            "network": {"bsonType": "object"},
+            "region": {"bsonType": "object"},
+            "island": {"bsonType": "object"},
+            "environment": {"bsonType": "object"},
+            "space": {"bsonType": "object"},
+        },
+    }
+}
+
+PROJECT_REGISTRY_SCHEMA = {
+    "$jsonSchema": {
+        "bsonType": "object",
+        "required": ["projects"],
+        "properties": {
+            "projects": {"bsonType": "array", "items": {"bsonType": "string"}},
+        },
+    }
+}
 
 
 def seed_database():
     client = MongoClient(MONGO_URI)
     db = client[MONGO_DB_NAME]
-    collection = db[MONGO_COLLECTION]
-
-    # Clear collection out completely to prevent stale artifact noise
-    collection.delete_many({})
 
     # Document A: Enterprise Cascading Hierarchical Configuration Tree
     config_tree = {
-        "doc_type": "enterprise_configuration",
         "config": {
             "global_timeout_ms": 3000,
-            "monitoring_provider": "datadog"
+            "monitoring_provider": "datadog",
         },
         "space": {
             "core-infrastructure": {
@@ -72,7 +126,6 @@ def seed_database():
 
     # Document B: Network Topology Translation Naming Conventions
     naming_conventions = {
-        "doc_type": "naming_conventions",
         "network": {
             "backbone-net": {"host": "bb", "cname": "net"}
         },
@@ -94,7 +147,6 @@ def seed_database():
 
     # Document C: Standalone Global Projects Inventory Registry
     project_registry = {
-        "doc_type": "project_registry",
         "projects": [
             "payment-gateway",
             "authentication-service",
@@ -103,11 +155,35 @@ def seed_database():
         ]
     }
 
-    collection.insert_one(config_tree)
-    collection.insert_one(naming_conventions)
-    collection.insert_one(project_registry)
+    # Validate every document through its Pydantic model BEFORE touching Mongo —
+    # malformed seed data raises here, before any destructive write.
+    EnterpriseConfigurationDoc(**config_tree)
+    NamingConventionsDoc(**naming_conventions)
+    ProjectRegistryDoc(**project_registry)
 
-    print("Successfully seeded singular hierarchy models into MongoDB.")
+    # Legacy single-collection layout (pre-split). Drop it so re-seeding leaves a
+    # clean, three-collection database.
+    db.drop_collection("global_configs")
+
+    plan = [
+        (ENTERPRISE_COLLECTION, ENTERPRISE_SCHEMA, config_tree),
+        (NAMING_COLLECTION, NAMING_SCHEMA, naming_conventions),
+        (PROJECTS_COLLECTION, PROJECT_REGISTRY_SCHEMA, project_registry),
+    ]
+
+    for name, validator, document in plan:
+        # Destructive: drop and recreate so the collection always carries the
+        # current validator. Idempotent across re-runs.
+        db.drop_collection(name)
+        db.create_collection(
+            name,
+            validator=validator,
+            validationLevel="strict",
+            validationAction="error",
+        )
+        db[name].insert_one(document)
+
+    print("Successfully seeded the three governing collections into MongoDB.")
     client.close()
 
 

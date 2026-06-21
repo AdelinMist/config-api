@@ -16,8 +16,21 @@ class MongoConfigProvider:
     """All MongoDB access for the Config API plus in-memory caching (configurable
     TTL, default 60s) and the background allowlist-sync loop."""
 
-    def __init__(self, mongo_client: AsyncMongoClient, db_name: str, collection_name: str = "global_configs", cache_ttl_seconds: int = 60):
-        self.collection = mongo_client[db_name][collection_name]
+    def __init__(
+        self,
+        mongo_client: AsyncMongoClient,
+        db_name: str,
+        *,
+        enterprise_collection: str = "enterprise_configuration",
+        naming_collection: str = "naming_conventions",
+        projects_collection: str = "project_registry",
+        cache_ttl_seconds: int = 60,
+    ):
+        db = mongo_client[db_name]
+        # One purpose-built collection per shape, each holding a single document.
+        self.enterprise = db[enterprise_collection]
+        self.naming = db[naming_collection]
+        self.projects = db[projects_collection]
         self._cache = Cache(Cache.MEMORY)
         self._cache_ttl = cache_ttl_seconds
 
@@ -27,7 +40,7 @@ class MongoConfigProvider:
         dropdowns regenerate on the next request."""
         try:
             # 1. Naming convention coordinate tokens
-            naming_doc = await self.collection.find_one({"doc_type": "naming_conventions"})
+            naming_doc = await self.naming.find_one({})
             if naming_doc:
                 LIVE_ALLOWED_NETWORKS.clear()
                 LIVE_ALLOWED_NETWORKS.update(naming_doc.get("network", {}).keys())
@@ -41,7 +54,7 @@ class MongoConfigProvider:
                 LIVE_ALLOWED_SPACES.update(naming_doc.get("space", {}).keys())
 
             # 2. Global project registry catalog
-            project_doc = await self.collection.find_one({"doc_type": "project_registry"})
+            project_doc = await self.projects.find_one({})
             if project_doc:
                 LIVE_ALLOWED_PROJECTS.clear()
                 LIVE_ALLOWED_PROJECTS.update(project_doc.get("projects", []))
@@ -67,7 +80,7 @@ class MongoConfigProvider:
         if cached is not None:
             return cached
 
-        config_doc = await self.collection.find_one({"doc_type": "enterprise_configuration"})
+        config_doc = await self.enterprise.find_one({})
         if not config_doc:
             return {}
 
@@ -105,13 +118,13 @@ class MongoConfigProvider:
         if cached is not None:
             return cached
 
-        naming_doc = await self.collection.find_one({"doc_type": "naming_conventions"})
+        naming_doc = await self.naming.find_one({})
         if not naming_doc:
             return {}
 
         # No metadata coordinates supplied -> return the entire naming dictionary.
         if not any([meta.network, meta.region, meta.island, meta.environment, meta.space]):
-            payload = {k: v for k, v in naming_doc.items() if k not in ("_id", "doc_type")}
+            payload = {k: v for k, v in naming_doc.items() if k != "_id"}
             await self._cache.set(cache_key, payload, ttl=self._cache_ttl)
             return payload
 
@@ -134,10 +147,37 @@ class MongoConfigProvider:
         if cached_list is not None:
             return cached_list
 
-        project_doc = await self.collection.find_one({"doc_type": "project_registry"})
+        project_doc = await self.projects.find_one({})
         if not project_doc:
             return []
 
         result_list = project_doc.get("projects", [])
         await self._cache.set(cache_key, result_list, ttl=self._cache_ttl)
         return result_list
+
+    async def get_coordinate_catalog(self) -> Dict[str, List[str]]:
+        """Return the valid values for every coordinate level plus the project list.
+
+        Sourced from the `naming_conventions` per-level keys and the
+        `project_registry` projects — the same data that drives the live
+        allowlists — so clients can discover what they're allowed to query."""
+        cache_key = "global:coordinate_catalog"
+
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        naming_doc = await self.naming.find_one({}) or {}
+        project_doc = await self.projects.find_one({}) or {}
+
+        catalog = {
+            "space": sorted(naming_doc.get("space", {}).keys()),
+            "network": sorted(naming_doc.get("network", {}).keys()),
+            "region": sorted(naming_doc.get("region", {}).keys()),
+            "island": sorted(naming_doc.get("island", {}).keys()),
+            "environment": sorted(naming_doc.get("environment", {}).keys()),
+            "projects": sorted(project_doc.get("projects", [])),
+        }
+
+        await self._cache.set(cache_key, catalog, ttl=self._cache_ttl)
+        return catalog

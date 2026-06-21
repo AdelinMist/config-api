@@ -22,7 +22,9 @@ def create_app() -> FastAPI:
     config_provider = MongoConfigProvider(
         mongo_client,
         db_name=config_v1_config.MONGO_DB_NAME,
-        collection_name=config_v1_config.MONGO_COLLECTION,
+        enterprise_collection=config_v1_config.MONGO_COLLECTION_ENTERPRISE_CONFIG,
+        naming_collection=config_v1_config.MONGO_COLLECTION_NAMING,
+        projects_collection=config_v1_config.MONGO_COLLECTION_PROJECTS,
         cache_ttl_seconds=config_v1_config.CACHE_TTL_SECONDS,
     )
 
