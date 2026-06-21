@@ -4,12 +4,14 @@ from fastapi import FastAPI
 import uvicorn
 from pymongo import AsyncMongoClient
 from tashtiot_apis_library import general_create_app
+from tashtiot_apis_library.fastapi_template.config_api import (
+    install_coordinate_validation_error_handler,
+    make_config_openapi,
+)
 
 from .v1.config.conf import config as config_v1_config
-from .v1.config.errors import install_coordinate_validation_error_handler
 from .v1.config.provider import MongoConfigProvider
 from .v1.config.routes import get_v1_config_router
-from .v1.config.openapi import make_config_openapi
 
 
 def create_app() -> FastAPI:
