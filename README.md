@@ -19,7 +19,7 @@ docker compose up -d
 pip install -r requirements.txt
 
 # Seed the three governing documents (destructive: clears the collection first)
-python seed_config.py
+python scripts/seed_config.py
 
 # Run the API (serves on 0.0.0.0:5000)
 python -m app.main
@@ -76,22 +76,26 @@ All routes are read-only `GET`s, so every coordinate binds from **query paramete
 ## Architecture (`app/v1/config/`)
 
 - **`conf.py`** — `BaseSettings` (Mongo URI/db/collection, poll interval, prefix, title), env-driven.
-- **`schemas.py`** — `InfraMetadata` (all-optional) / `RequiredInfraMetadata` (strict), response models,
-  and the mutable module-level `LIVE_ALLOWED_*` sets used for validation.
 - **`provider.py`** — `MongoConfigProvider`: all Mongo access, `aiocache` (60s TTL), cascading config
-  resolution, naming resolution, project registry, and the background allowlist-sync loop.
-- **`openapi.py`** — `make_config_openapi`: injects the live allowlists as `enum` values into the
-  config/naming query parameters.
-- **`app/main.py`** — `create_app()`: builds the Mongo provider, registers the poller via the
-  library factory's `async_background_tasks`, includes the router, and installs the OpenAPI patcher.
+  resolution, naming resolution, project registry, and the background allowlist-sync loop. This service
+  is the Mongo-backed **origin**; the library only ships a remote HTTP-proxy provider, so this stays local.
+- **`app/main.py`** — `create_app()`: builds the Mongo provider, includes the router, installs the
+  coordinate 422 handler and the OpenAPI patcher, then appends the poller to
+  `app.state.async_background_tasks` (the registry the library factory's lifespan launches at startup).
+
+The coordinate schemas (`InfraMetadata` / `RequiredInfraMetadata`), response models, the OpenAPI enum
+patcher (`make_config_openapi`), the coordinate-validation 422 handler, and the `LIVE_ALLOWED_*` sets are
+**consumed from the library** at `tashtiot_apis_library.fastapi_template.config_api` — not defined here.
 
 ### Dynamic validation & OpenAPI enums (non-obvious)
 
-The `LIVE_ALLOWED_*` sets are mutable module globals, not static config. A background loop
+The `LIVE_ALLOWED_*` sets (in the library's `config_api`) are mutable module globals, not static config.
+This service's `provider.crawl_and_sync_keys` imports those **same** set objects, and a background loop
 (`start_periodic_polling`, every `POLL_INTERVAL_SECONDS`) reads the `naming_conventions` and
-`project_registry` documents, repopulates the sets in place, and nulls `app.openapi_schema` so the
-next schema request regenerates with current enums. Validators are **permissive when a set is empty**
-(pre-first-poll / missing document) and for omitted coordinates — keep that guard when editing them.
+`project_registry` documents, repopulates the sets **in place** (`.clear()` + `.update()` — never
+reassign, or the library would stop seeing the updates), and nulls `app.openapi_schema` so the next
+schema request regenerates with current enums. The library's validators are **permissive when a set is
+empty** (pre-first-poll / missing document) and for omitted coordinates — keep that guard when editing.
 
 ### The three MongoDB documents (collection `global_configs`, keyed by `doc_type`)
 
@@ -101,4 +105,4 @@ next schema request regenerates with current enums. Validators are **permissive 
 2. `naming_conventions` — per-level host/cname token maps.
 3. `project_registry` — flat `projects` list of authorized application names.
 
-See `seed_config.py` for the canonical seed data.
+See `scripts/seed_config.py` for the canonical seed data.
