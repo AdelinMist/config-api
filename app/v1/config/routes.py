@@ -6,9 +6,8 @@ from .provider import MongoConfigProvider
 from tashtiot_apis_library.fastapi_template.config_api import (
     InfraMetadata, RequiredInfraMetadata,
     ConfigResolutionResponse, NamingConventionResponse, AllProjectsResponse,
+    CoordinateCatalogResponse,
 )
-
-from .models import CoordinateCatalogResponse
 
 
 def get_v1_config_router(provider: MongoConfigProvider) -> APIRouter:

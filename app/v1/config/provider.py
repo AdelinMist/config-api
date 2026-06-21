@@ -158,24 +158,41 @@ class MongoConfigProvider:
     async def get_coordinate_catalog(self) -> Dict[str, List[str]]:
         """Return the valid values for every coordinate level plus the project list.
 
-        Sourced from the `naming_conventions` per-level keys and the
-        `project_registry` projects — the same data that drives the live
-        allowlists — so clients can discover what they're allowed to query."""
+        Coordinate values are collected by walking the **enterprise configuration
+        tree** — the authoritative source of which space → network → region →
+        island → environment nodes actually exist — unioning the keys found at each
+        depth across every branch. Projects come from the project registry (a
+        project is validated but is not part of the cascade tree)."""
         cache_key = "global:coordinate_catalog"
 
         cached = await self._cache.get(cache_key)
         if cached is not None:
             return cached
 
-        naming_doc = await self.naming.find_one({}) or {}
+        config_doc = await self.enterprise.find_one({}) or {}
         project_doc = await self.projects.find_one({}) or {}
 
+        spaces, networks, regions, islands, environments = set(), set(), set(), set(), set()
+        space_map = config_doc.get("space", {})
+        spaces.update(space_map.keys())
+        for space_node in space_map.values():
+            network_map = space_node.get("network", {})
+            networks.update(network_map.keys())
+            for network_node in network_map.values():
+                region_map = network_node.get("region", {})
+                regions.update(region_map.keys())
+                for region_node in region_map.values():
+                    island_map = region_node.get("island", {})
+                    islands.update(island_map.keys())
+                    for island_node in island_map.values():
+                        environments.update(island_node.get("environment", {}).keys())
+
         catalog = {
-            "space": sorted(naming_doc.get("space", {}).keys()),
-            "network": sorted(naming_doc.get("network", {}).keys()),
-            "region": sorted(naming_doc.get("region", {}).keys()),
-            "island": sorted(naming_doc.get("island", {}).keys()),
-            "environment": sorted(naming_doc.get("environment", {}).keys()),
+            "space": sorted(spaces),
+            "network": sorted(networks),
+            "region": sorted(regions),
+            "island": sorted(islands),
+            "environment": sorted(environments),
             "projects": sorted(project_doc.get("projects", [])),
         }
 

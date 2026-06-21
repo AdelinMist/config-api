@@ -154,9 +154,12 @@ class TestCrawlAndSyncKeys:
 
 class TestCoordinateCatalog:
     async def test_returns_sorted_values_per_level(self, provider):
+        # Coordinates come from the enterprise config tree — which only configures
+        # the `core-infrastructure` space (note `tenant-alpha` exists in the naming
+        # doc but has no config node, so it is intentionally absent here).
         catalog = await provider.get_coordinate_catalog()
         assert catalog == {
-            "space": ["core-infrastructure", "tenant-alpha"],
+            "space": ["core-infrastructure"],
             "network": ["backbone-net"],
             "region": ["us-east"],
             "island": ["compute-island-a"],

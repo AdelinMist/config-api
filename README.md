@@ -82,7 +82,7 @@ with `AUTH_OIDC_ISSUER` / `AUTH_JWKS_URL`.
 | Method & path | Purpose |
 |---------------|---------|
 | `GET /projects` | All authorized projects from the registry |
-| `GET /coordinates` | All valid values per coordinate level (`space`/`network`/`region`/`island`/`environment`) plus `projects` — a discovery endpoint (200 with empty arrays when unseeded) |
+| `GET /coordinates` | Discovery: valid values per coordinate level (`space`/`network`/`region`/`island`/`environment`) collected from the **enterprise config tree**, plus `projects` from the registry (200 with empty arrays when unseeded) |
 | `GET /config`   | Cascading config resolution — **all** coordinates required (strict 422 if missing) |
 | `GET /naming`   | Naming tokens for the given coordinates; with none supplied, the entire naming dictionary |
 
@@ -92,9 +92,11 @@ All routes are read-only `GET`s, so every coordinate binds from **query paramete
 
 - **`conf.py`** — `BaseSettings` (Mongo URI/db, the three `MONGO_COLLECTION_*` names, poll interval,
   prefix, title), env-driven.
-- **`models.py`** — local Pydantic models: one per collection shape (envelope-level; inner config/naming
-  values stay free-form) used to validate writes in `scripts/seed_config.py`, plus `CoordinateCatalogResponse`
-  for `/coordinates`. The shared coordinate/response contract still comes from the library's `config_api`.
+- **`models.py`** — local write-side Pydantic models, one per collection, used to validate writes in
+  `scripts/seed_config.py`. `EnterpriseConfigurationDoc` is **fully nested** (typed `SpaceNode → NetworkNode
+  → RegionNode → IslandNode → EnvironmentNode`, `extra="forbid"`); per-level `config` payloads and the
+  naming values stay free-form by design. The shared coordinate/response contract — including
+  `CoordinateCatalogResponse` for `/coordinates` — comes from the library's `config_api`.
 - **`provider.py`** — `MongoConfigProvider`: all Mongo access (one handle per collection), `aiocache`
   (60s TTL), cascading config resolution, naming resolution, project registry, the coordinate catalog, and
   the background allowlist-sync loop. This service is the Mongo-backed **origin**; the library only ships a

@@ -36,13 +36,32 @@ PROJECTS_COLLECTION = os.environ.get("MONGO_COLLECTION_PROJECTS", "project_regis
 # Per-collection envelope validators. Inner config/naming values stay free-form
 # (the cascade tree and naming tokens are intentionally heterogeneous); `_id` is
 # allowed because `additionalProperties` is left at its default (true).
+def _hierarchy_node(child_key=None, child_node=None):
+    """A cascade node: a ``config`` object plus an optional child map keyed by name.
+
+    ``additionalProperties: False`` rejects stray/typo'd keys (mirrors the Pydantic
+    models' ``extra="forbid"``); the child map applies ``child_node`` to every name."""
+    properties = {"config": {"bsonType": "object"}}
+    if child_key:
+        properties[child_key] = {"bsonType": "object", "additionalProperties": child_node}
+    return {"bsonType": "object", "properties": properties, "additionalProperties": False}
+
+
+# Built bottom-up: environment (leaf) → island → region → network → space.
+_ENV_NODE = _hierarchy_node()
+_ISLAND_NODE = _hierarchy_node("environment", _ENV_NODE)
+_REGION_NODE = _hierarchy_node("island", _ISLAND_NODE)
+_NETWORK_NODE = _hierarchy_node("region", _REGION_NODE)
+_SPACE_NODE = _hierarchy_node("network", _NETWORK_NODE)
+
 ENTERPRISE_SCHEMA = {
     "$jsonSchema": {
         "bsonType": "object",
         "required": ["config", "space"],
+        # Top level intentionally allows extra props so Mongo's `_id` is permitted.
         "properties": {
             "config": {"bsonType": "object"},
-            "space": {"bsonType": "object"},
+            "space": {"bsonType": "object", "additionalProperties": _SPACE_NODE},
         },
     }
 }

@@ -11,6 +11,7 @@ from app.v1.config.models import (
     EnterpriseConfigurationDoc,
     NamingConventionsDoc,
     ProjectRegistryDoc,
+    SpaceNode,
 )
 from tests.conftest import ENTERPRISE_CONFIG_DOC, NAMING_DOC, PROJECT_REGISTRY_DOC
 
@@ -55,3 +56,52 @@ class TestDefaults:
         assert NamingConventionsDoc().space == {}
         assert ProjectRegistryDoc().projects == []
         assert EnterpriseConfigurationDoc().config == {}
+
+
+class TestEnterpriseHierarchy:
+    """The enterprise model is fully typed down every cascade level."""
+
+    def test_full_depth_tree_validates_and_parses(self):
+        doc = {
+            "config": {"global_timeout_ms": 3000},
+            "space": {
+                "core": {
+                    "config": {"policy": "tier-1"},
+                    "network": {
+                        "bb": {
+                            "config": {},
+                            "region": {
+                                "us-east": {
+                                    "config": {},
+                                    "island": {
+                                        "isla": {
+                                            "config": {},
+                                            "environment": {
+                                                "production": {"config": {"cluster_size": 20}},
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        }
+        parsed = EnterpriseConfigurationDoc(**doc)
+        # Nodes are parsed into typed models, not left as raw dicts.
+        env = parsed.space["core"].network["bb"].region["us-east"].island["isla"].environment["production"]
+        assert env.config == {"cluster_size": 20}
+
+    def test_rejects_wrong_type_deep_in_tree(self):
+        with pytest.raises(ValidationError):
+            EnterpriseConfigurationDoc(space={"core": {"network": "not-an-object"}})
+
+    def test_rejects_unknown_key_at_a_node(self):
+        # extra="forbid": a typo'd level/key is rejected rather than silently kept.
+        with pytest.raises(ValidationError):
+            EnterpriseConfigurationDoc(space={"core": {"netwrok": {}}})
+
+    def test_node_config_must_be_a_mapping(self):
+        with pytest.raises(ValidationError):
+            SpaceNode(config="not-an-object")

@@ -32,7 +32,8 @@ class TestCoordinatesRoute:
         resp = client.get(f"{api_prefix}/coordinates")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["space"] == ["core-infrastructure", "tenant-alpha"]
+        # Sourced from the enterprise config tree (only core-infrastructure is configured).
+        assert body["space"] == ["core-infrastructure"]
         assert body["network"] == ["backbone-net"]
         assert body["region"] == ["us-east"]
         assert body["island"] == ["compute-island-a"]
