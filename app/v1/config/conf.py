@@ -23,9 +23,19 @@ class ConfigV1Settings(BaseSettings):
         description="MongoDB database holding the governing configuration documents.",
     )
 
-    MONGO_COLLECTION: str = Field(
-        default="global_configs",
-        description="MongoDB collection keyed by `doc_type` (enterprise_configuration / naming_conventions / project_registry).",
+    MONGO_COLLECTION_ENTERPRISE_CONFIG: str = Field(
+        default="enterprise_configuration",
+        description="Collection holding the single cascading enterprise-configuration document.",
+    )
+
+    MONGO_COLLECTION_NAMING: str = Field(
+        default="naming_conventions",
+        description="Collection holding the single naming-conventions document.",
+    )
+
+    MONGO_COLLECTION_PROJECTS: str = Field(
+        default="project_registry",
+        description="Collection holding the single project-registry document.",
     )
 
     POLL_INTERVAL_SECONDS: int = Field(

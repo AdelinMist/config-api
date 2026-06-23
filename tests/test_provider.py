@@ -144,8 +144,41 @@ class TestCrawlAndSyncKeys:
         async def boom(_query):
             raise RuntimeError("mongo down")
 
-        monkeypatch.setattr(prov.collection, "find_one", boom)
+        # crawl reads the naming collection first; make that blow up.
+        monkeypatch.setattr(prov.naming, "find_one", boom)
         app = FakeApp()
         await prov.crawl_and_sync_keys(app)  # should not raise
         # Failed before reaching the invalidation line.
         assert app.openapi_schema == "stale-cached-schema"
+
+
+class TestCoordinateCatalog:
+    async def test_returns_sorted_values_per_level(self, provider):
+        # Coordinates come from the enterprise config tree — which only configures
+        # the `core-infrastructure` space (note `tenant-alpha` exists in the naming
+        # doc but has no config node, so it is intentionally absent here).
+        catalog = await provider.get_coordinate_catalog()
+        assert catalog == {
+            "space": ["core-infrastructure"],
+            "network": ["backbone-net"],
+            "region": ["us-east"],
+            "island": ["compute-island-a"],
+            "environment": ["production", "staging"],
+            "projects": [
+                "authentication-service", "data-warehouse-pipeline",
+                "notification-engine", "payment-gateway",
+            ],
+        }
+
+    async def test_empty_when_unseeded(self, empty_provider):
+        catalog = await empty_provider.get_coordinate_catalog()
+        assert catalog == {
+            "space": [], "network": [], "region": [],
+            "island": [], "environment": [], "projects": [],
+        }
+
+    async def test_cached_after_first_fetch(self, provider):
+        await provider.get_coordinate_catalog()
+        hits = provider._fake_collection.find_one_calls
+        await provider.get_coordinate_catalog()
+        assert provider._fake_collection.find_one_calls == hits

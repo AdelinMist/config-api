@@ -27,6 +27,20 @@ python -m app.main
 
 Swagger UI at `/docs`, metrics at `/metrics` (both provided by the library factory).
 
+### MongoDB connection & authentication
+
+The service connects using **`MONGO_URI` only** — all credentials and TLS options live in the connection
+string, so there is no separate username/password setting. For an authenticated deployment, point
+`MONGO_URI` at a URI carrying the credentials, e.g.:
+
+```
+mongodb://<user>:<pass>@<host>:27017/infrastructure_governor?authSource=admin&tls=true
+mongodb+srv://<user>:<pass>@<cluster>/?retryWrites=true&w=majority   # Atlas / SRV (pymongo[srv])
+```
+
+`authSource` is usually `admin`; the database the service reads is set separately by `MONGO_DB_NAME`.
+Keep the URI in `.env` (gitignored) or inject it from a secret store — never commit credentials.
+
 ## Authentication — SSO (generic OIDC)
 
 The API is protected by **SSO**: clients present a bearer JWT issued by your SSO/OIDC provider, and the
@@ -68,6 +82,7 @@ with `AUTH_OIDC_ISSUER` / `AUTH_JWKS_URL`.
 | Method & path | Purpose |
 |---------------|---------|
 | `GET /projects` | All authorized projects from the registry |
+| `GET /coordinates` | Discovery: valid values per coordinate level (`space`/`network`/`region`/`island`/`environment`) collected from the **enterprise config tree**, plus `projects` from the registry (200 with empty arrays when unseeded) |
 | `GET /config`   | Cascading config resolution — **all** coordinates required (strict 422 if missing) |
 | `GET /naming`   | Naming tokens for the given coordinates; with none supplied, the entire naming dictionary |
 
@@ -75,10 +90,17 @@ All routes are read-only `GET`s, so every coordinate binds from **query paramete
 
 ## Architecture (`app/v1/config/`)
 
-- **`conf.py`** — `BaseSettings` (Mongo URI/db/collection, poll interval, prefix, title), env-driven.
-- **`provider.py`** — `MongoConfigProvider`: all Mongo access, `aiocache` (60s TTL), cascading config
-  resolution, naming resolution, project registry, and the background allowlist-sync loop. This service
-  is the Mongo-backed **origin**; the library only ships a remote HTTP-proxy provider, so this stays local.
+- **`conf.py`** — `BaseSettings` (Mongo URI/db, the three `MONGO_COLLECTION_*` names, poll interval,
+  prefix, title), env-driven.
+- **`models.py`** — local write-side Pydantic models, one per collection, used to validate writes in
+  `scripts/seed_config.py`. `EnterpriseConfigurationDoc` is **fully nested** (typed `SpaceNode → NetworkNode
+  → RegionNode → IslandNode → EnvironmentNode`, `extra="forbid"`); per-level `config` payloads and the
+  naming values stay free-form by design. The shared coordinate/response contract — including
+  `CoordinateCatalogResponse` for `/coordinates` — comes from the library's `config_api`.
+- **`provider.py`** — `MongoConfigProvider`: all Mongo access (one handle per collection), `aiocache`
+  (60s TTL), cascading config resolution, naming resolution, project registry, the coordinate catalog, and
+  the background allowlist-sync loop. This service is the Mongo-backed **origin**; the library only ships a
+  remote HTTP-proxy provider, so this stays local.
 - **`app/main.py`** — `create_app()`: builds the Mongo provider, includes the router, installs the
   coordinate 422 handler and the OpenAPI patcher, then appends the poller to
   `app.state.async_background_tasks` (the registry the library factory's lifespan launches at startup).
@@ -97,7 +119,7 @@ reassign, or the library would stop seeing the updates), and nulls `app.openapi_
 schema request regenerates with current enums. The library's validators are **permissive when a set is
 empty** (pre-first-poll / missing document) and for omitted coordinates — keep that guard when editing.
 
-### The three MongoDB documents (collection `global_configs`, keyed by `doc_type`)
+### The three MongoDB collections (one governing document each)
 
 1. `enterprise_configuration` — nested config tree; each level carries a `config` dict, merged
    root → space → network → region → island → environment (deeper overrides shallower).
@@ -105,4 +127,10 @@ empty** (pre-first-poll / missing document) and for omitted coordinates — keep
 2. `naming_conventions` — per-level host/cname token maps.
 3. `project_registry` — flat `projects` list of authorized application names.
 
-See `scripts/seed_config.py` for the canonical seed data.
+Each collection is created with a `$jsonSchema` validator (envelope-level enforcement on write), and
+`scripts/seed_config.py` validates every document through its `app/v1/config/models.py` Pydantic model
+before inserting. Reads in `provider.py` stay dict-based/tolerant so a slightly-off document never 500s
+the read path. See `scripts/seed_config.py` for the canonical seed data and validators.
+
+> Note: the docs reference `docker compose up -d`, but the repo currently has **no compose file** — run
+> Mongo however you prefer (e.g. `docker run -p 27017:27017 mongo:7.0`).

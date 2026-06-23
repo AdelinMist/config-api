@@ -16,7 +16,7 @@ from tashtiot_apis_library.fastapi_template.config_api import (
 from app.v1.config.conf import config
 from app.v1.config.provider import MongoConfigProvider
 from app.v1.config.routes import get_v1_config_router
-from tests.fakes import FakeCollection, FakeMongoClient
+from tests.fakes import CallCounter, FakeCollection, FakeMongoClient
 
 
 ENTERPRISE_CONFIG_DOC = {
@@ -99,12 +99,45 @@ def reset_live_allowlists():
         s.clear()
 
 
+ENTERPRISE_COLLECTION = "enterprise_configuration"
+NAMING_COLLECTION = "naming_conventions"
+PROJECTS_COLLECTION = "project_registry"
+
+# Maps a seed doc's `doc_type` to the collection that now holds it (post-split).
+_DOC_TYPE_TO_COLLECTION = {
+    "enterprise_configuration": ENTERPRISE_COLLECTION,
+    "naming_conventions": NAMING_COLLECTION,
+    "project_registry": PROJECTS_COLLECTION,
+}
+
+
 def make_provider(docs):
-    """Build a provider backed by a fake Mongo holding ``docs``."""
-    collection = FakeCollection(docs)
-    client = FakeMongoClient(collection)
-    provider = MongoConfigProvider(client, db_name="testdb", collection_name="global_configs")
-    return provider, collection
+    """Build a provider backed by a fake Mongo with one collection per shape.
+
+    ``docs`` are the flat seed list; each is routed to its collection by
+    ``doc_type``. Returns the provider plus a ``CallCounter`` aggregating
+    ``find_one_calls`` across the three collections (for cache-hit assertions)."""
+    collections = {
+        ENTERPRISE_COLLECTION: FakeCollection([]),
+        NAMING_COLLECTION: FakeCollection([]),
+        PROJECTS_COLLECTION: FakeCollection([]),
+    }
+    for doc in docs:
+        target = _DOC_TYPE_TO_COLLECTION[doc["doc_type"]]
+        # Post-split, the collection name identifies the shape — real seeded docs
+        # carry no `doc_type`. Strip it so the fakes mirror production storage.
+        stored = {k: v for k, v in doc.items() if k != "doc_type"}
+        collections[target] = FakeCollection([stored])
+
+    client = FakeMongoClient(collections)
+    provider = MongoConfigProvider(
+        client,
+        db_name="testdb",
+        enterprise_collection=ENTERPRISE_COLLECTION,
+        naming_collection=NAMING_COLLECTION,
+        projects_collection=PROJECTS_COLLECTION,
+    )
+    return provider, CallCounter(collections.values())
 
 
 @pytest.fixture

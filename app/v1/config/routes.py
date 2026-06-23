@@ -6,6 +6,7 @@ from .provider import MongoConfigProvider
 from tashtiot_apis_library.fastapi_template.config_api import (
     InfraMetadata, RequiredInfraMetadata,
     ConfigResolutionResponse, NamingConventionResponse, AllProjectsResponse,
+    CoordinateCatalogResponse,
 )
 
 
@@ -24,6 +25,16 @@ def get_v1_config_router(provider: MongoConfigProvider) -> APIRouter:
         if not project_list:
             raise HTTPException(status_code=404, detail="The project inventory catalog is empty.")
         return AllProjectsResponse(projects=project_list)
+
+    @router.get("/coordinates", response_model=CoordinateCatalogResponse, name="List allowed coordinate values")
+    async def list_coordinate_catalog() -> CoordinateCatalogResponse:
+        """Return every valid value per coordinate level plus the project list.
+
+        A discovery endpoint: clients use it to learn which coordinates the
+        config/naming routes will accept. Empty arrays (nothing seeded yet) are a
+        valid response — no 404."""
+        catalog = await provider.get_coordinate_catalog()
+        return CoordinateCatalogResponse(**catalog)
 
     @router.get("/config", response_model=ConfigResolutionResponse, name="Resolve cascading config")
     async def fetch_infrastructure_configurations(

@@ -1,12 +1,13 @@
 """In-memory test doubles for MongoDB.
 
-The Config API provider only ever calls ``collection.find_one({"doc_type": ...})``,
-so a tiny async fake is enough — no need for a real Mongo or ``mongomock``. The
-fake client mirrors the ``client[db][collection]`` subscript chain used in
-``MongoConfigProvider.__init__`` and ``app/main.py``.
+The Config API provider reads each governing collection with ``find_one({})``, so
+a tiny async fake is enough — no need for a real Mongo or ``mongomock``. The fake
+client mirrors the ``client[db][collection]`` subscript chain used in
+``MongoConfigProvider.__init__`` and ``app/main.py``, routing each collection name
+to its own ``FakeCollection``.
 """
 import copy
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 class FakeCollection:
@@ -26,19 +27,33 @@ class FakeCollection:
         return None
 
 
-class _FakeDatabase:
-    def __init__(self, collection: FakeCollection):
-        self._collection = collection
+class CallCounter:
+    """Aggregates ``find_one_calls`` across collections so cache assertions can
+    count total Mongo hits regardless of which collection served them."""
 
-    def __getitem__(self, _name: str) -> FakeCollection:
-        return self._collection
+    def __init__(self, collections: Iterable[FakeCollection]):
+        self._collections = list(collections)
+
+    @property
+    def find_one_calls(self) -> int:
+        return sum(c.find_one_calls for c in self._collections)
+
+
+class _FakeDatabase:
+    def __init__(self, collections: Dict[str, FakeCollection]):
+        self._collections = collections
+
+    def __getitem__(self, name: str) -> FakeCollection:
+        # Unknown collections behave as empty (mirrors a not-yet-seeded Mongo).
+        return self._collections.setdefault(name, FakeCollection([]))
 
 
 class FakeMongoClient:
-    """Supports the ``client[db_name][collection_name]`` access pattern."""
+    """Supports the ``client[db_name][collection_name]`` access pattern, routing
+    each collection name to its own ``FakeCollection``."""
 
-    def __init__(self, collection: FakeCollection):
-        self._database = _FakeDatabase(collection)
+    def __init__(self, collections: Dict[str, FakeCollection]):
+        self._database = _FakeDatabase(collections)
 
     def __getitem__(self, _db_name: str) -> _FakeDatabase:
         return self._database

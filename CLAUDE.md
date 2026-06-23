@@ -49,25 +49,38 @@ the Mongo provider, routes, schemas, and OpenAPI enum injection.
 ## Configuration
 
 Env-driven via `app/v1/config/conf.py` (`BaseSettings`, reads `.env`); see `.env.example`. Key vars:
-`MONGO_URI`, `MONGO_DB_NAME`, `MONGO_COLLECTION`, `POLL_INTERVAL_SECONDS`, `API_PREFIX`, `API_TITLE`.
+`MONGO_URI` (carries any auth/TLS credentials), `MONGO_DB_NAME`, the three `MONGO_COLLECTION_*` names
+(`_ENTERPRISE_CONFIG`/`_NAMING`/`_PROJECTS`), `POLL_INTERVAL_SECONDS`, `API_PREFIX`, `API_TITLE`.
 
 ## Architecture (`app/v1/config/`)
 
-- **`main.py`** (`create_app()`) — builds the `AsyncMongoClient` + `MongoConfigProvider`, registers the
-  poller via the library factory's `async_background_tasks`, includes the router, installs the OpenAPI patcher.
-- **`provider.py`** (`MongoConfigProvider`) — all Mongo access, `aiocache` (60s TTL), config cascade,
-  naming resolution, project registry, and the background allowlist-sync loop. This service is the
-  Mongo-backed **origin**; the library only ships a remote HTTP-proxy provider (`RemoteConfigProvider`),
-  so this provider stays local.
-- **`routes.py`** — `/projects`, `/config` (strict, 422 if any coordinate missing), `/naming` (all optional).
+- **`main.py`** (`create_app()`) — builds the `AsyncMongoClient` + `MongoConfigProvider`, includes the
+  router, installs the OpenAPI patcher, then appends the poller to `app.state.async_background_tasks`.
+- **`provider.py`** (`MongoConfigProvider`) — all Mongo access (one handle per collection: `self.enterprise`
+  / `self.naming` / `self.projects`), `aiocache` (60s TTL), config cascade, naming resolution, project
+  registry, the coordinate catalog (`get_coordinate_catalog`), and the background allowlist-sync loop. This
+  service is the Mongo-backed **origin**; the library only ships a remote HTTP-proxy provider
+  (`RemoteConfigProvider`), so this provider stays local.
+- **`models.py`** — local write-side Pydantic models (one per collection) for write-time validation in
+  `scripts/seed_config.py`. `EnterpriseConfigurationDoc` is fully nested (`SpaceNode → NetworkNode →
+  RegionNode → IslandNode → EnvironmentNode`, `extra="forbid"`); per-level `config` payloads stay
+  free-form. `CoordinateCatalogResponse` is **not** here — it's consumed from the library's `config_api`.
+- **`routes.py`** — `/projects`, `/coordinates` (discovery, sourced from the enterprise config tree;
+  200 + empty arrays when unseeded), `/config` (strict, 422 if any coordinate missing), `/naming`
+  (all optional).
 
-The schemas, response models, the OpenAPI enum patcher (`make_config_openapi`), the coordinate-validation
-422 handler (`install_coordinate_validation_error_handler`), and the `LIVE_ALLOWED_*` allowlist sets are
-**no longer defined here** — they are consumed from the library at
-`tashtiot_apis_library.fastapi_template.config_api`. `provider.py`/`routes.py`/`main.py` import them from
-there. Do not reintroduce local copies; general capabilities live in the library.
+The shared coordinate schemas, response models, the OpenAPI enum patcher (`make_config_openapi`), the
+coordinate-validation 422 handler (`install_coordinate_validation_error_handler`), and the `LIVE_ALLOWED_*`
+allowlist sets are **not defined here** — they are consumed from the library at
+`tashtiot_apis_library.fastapi_template.config_api`. Only origin-specific models live locally in `models.py`.
+Do not reintroduce local copies of the shared surface; general capabilities live in the library.
 
-### The three MongoDB documents (collection `global_configs`, keyed by `doc_type`)
+### The three MongoDB collections (one governing document each, with `$jsonSchema` validators)
+
+Split from the former single `global_configs` collection: each `doc_type` is now its own collection
+(`enterprise_configuration` / `naming_conventions` / `project_registry`), holding a single document and
+created with an envelope-level `$jsonSchema` validator (see `scripts/seed_config.py`). The provider reads
+each with `find_one({})`; documents no longer carry a `doc_type` field.
 
 1. `enterprise_configuration` — nested config tree; each level carries a `config` dict, merged
    root → space → network → region → island → environment (**deeper overrides shallower**).
