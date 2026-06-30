@@ -37,10 +37,15 @@ here. See `.env` and `tests/test_auth.py`.
 
 ```bash
 docker compose up -d                  # start MongoDB (mongo:7.0 on :27017)
-pip install -r requirements.txt       # pip.ini points at internal Artifactory for tashtiot-apis-library
-python scripts/seed_config.py         # seed the 3 governing docs — DESTRUCTIVE: clears the collection first
-python -m app.main                    # run the API
+uv sync                               # install deps into a managed .venv from uv.lock
+uv run python scripts/seed_config.py  # seed the 3 governing docs — DESTRUCTIVE: clears the collection first
+uv run python -m app.main             # run the API
 ```
+
+Deps are managed by **uv** (`pyproject.toml` + `uv.lock`, `.python-version` pins 3.12); there is no
+`requirements.txt`/`pip.ini` anymore. `tashtiot-apis-library` resolves from a **local editable checkout**
+at `../apis-library` (`[tool.uv.sources]`) because the published build lags `config_api` — that sibling
+checkout must exist to `uv sync`, including in any image build.
 
 A `pytest` suite lives under `tests/` (run `pytest`); it uses a fake Mongo (`tests/fakes.py`) and the
 seed shapes mirror `scripts/seed_config.py`. `test_auth.py` exercises the library's auth gating; the rest cover
