@@ -15,17 +15,48 @@ responsibility — it wires no ArgoCD/Vault/Git/AWX connectors.
 # Start MongoDB
 docker compose up -d
 
-# Install dependencies (pip.ini points at the internal Artifactory index for tashtiot-apis-library)
-pip install -r requirements.txt
+# Install dependencies into a managed venv (see "Dependencies with uv" below)
+uv sync
 
 # Seed the three governing documents (destructive: clears the collection first)
-python scripts/seed_config.py
+uv run python scripts/seed_config.py
 
 # Run the API (serves on 0.0.0.0:5000)
-python -m app.main
+uv run python -m app.main
 ```
 
 Swagger UI at `/docs`, metrics at `/metrics` (both provided by the library factory).
+
+### Dependencies with uv
+
+This project uses [uv](https://docs.astral.sh/uv/). Dependencies are declared in
+`pyproject.toml` and pinned in `uv.lock`; `.python-version` pins the interpreter (3.12). It is an
+app, not a library — `[tool.uv] package = false`, so uv manages the venv but never builds or
+installs this code as a package.
+
+`tashtiot-apis-library` resolves from a **local editable checkout** at `../apis-library`
+(`[tool.uv.sources]`), because the published build lags and is missing `fastapi_template.config_api`.
+That sibling checkout must be present for `uv sync` to succeed — on a dev machine and **in the
+Docker build** (the image needs the source available, e.g. via a published Artifactory build or a
+build context that includes it). All other deps resolve from PyPI.
+
+```bash
+uv sync                 # create/update .venv from uv.lock
+uv sync --frozen        # install exactly from the lock, never re-resolve (use in CI / images)
+uv run <cmd>            # run a command inside the managed venv
+uv add <pkg>            # add a runtime dependency (updates pyproject + lock)
+uv add --dev <pkg>      # add a dev-only dependency (the `dev` group)
+uv lock                 # re-resolve and refresh uv.lock after editing dependencies
+uv lock --check         # verify the lock is in sync with pyproject (good CI gate)
+```
+
+**Indexes / air-gapped networks.** uv does **not** read `pip.ini`. This project configures no
+custom index — `uv.lock` resolves everything from the default PyPI (`pypi.org/simple`). To pull
+from an internal mirror instead, add a `[[tool.uv.index]]` block to `pyproject.toml` (or set
+`UV_INDEX_URL`) and re-lock. Add `--offline` to use only the uv cache.
+
+Re-locking needs the index; installing from an existing lock (`uv sync --frozen`) does not — so
+prefer locking before going air-gapped and only re-lock when dependencies change.
 
 ### MongoDB connection & authentication
 
